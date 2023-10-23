@@ -18,15 +18,15 @@ L = get_logger(__name__)
 
 class SmartChargingFeature:
     @on(Action.SetChargingProfile)
-    def on_set_charging_profile(self):
+    def on_set_charging_profile(self, connector_id):
         if self.support_smart_charging:
             return SetChargingProfilePayload(status="Accepted")
-        raise NotSupportedError
+        raise NotSupportedError()
 
     @on(Action.ClearChargingProfile)
     def on_clear_charging_profile(self):
         _ = ClearChargingProfilePayload(status=ClearChargingProfileStatus.accepted)
-        raise NotSupportedError
+        raise NotSupportedError()
 
     @on(Action.GetCompositeSchedule)
     def on_get_composite_schedule(self):

@@ -9,10 +9,22 @@ routables = []
 
 
 class HandlerType(Enum):
-    CALL_FACTORY = "_payload_factory"
-    CALL_PAYLOAD = "_call_payload"
-    CALL_RESULT_FACTORY = "_call_result_factory"
-    CALL_RESULT_PAYLOAD = "_call_result"
+    """
+    Define types of handlers that can exist.
+
+    A message that originates from a CS can be interacted with before it is sent
+    and after the response is received.
+
+    A message that originates from a CSMS can not be interacted before it's received.
+    We can handle it after it is received, and after we send a response.
+
+    Handlers can be linked to an abstraction and a handler.
+    """
+
+    BEFORE_REQUEST = "request_from_cp"
+    AFTER_RESPONSE = "response_from_csms"
+    ON_REQUEST = "request_from_csms"
+    FOLLOW_REQUEST = "response_from_cs"
 
 
 def handler(action, handler: HandlerType):

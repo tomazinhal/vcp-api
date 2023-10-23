@@ -12,13 +12,14 @@ from ocpp.routing import after, on
 from ocpp.v16 import call, call_result
 from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus, ResetType
 from structlog import get_logger
+
 from utils import HandlerType, handler
 
 L = get_logger(__name__)
 
 
 class CoreFeature:
-    @handler(Action.BootNotification, HandlerType.CALL_FACTORY)
+    @handler(Action.BootNotification, HandlerType.BEFORE_REQUEST)
     def boot_notification_payload(self, **data):
         model = data.get("model", "unknown")
         vendor = data.get("vendor", "unknown")
@@ -30,7 +31,7 @@ class CoreFeature:
             firmware_version=firmware,
         )
 
-    @handler(Action.StatusNotification, HandlerType.CALL_FACTORY)
+    @handler(Action.StatusNotification, HandlerType.BEFORE_REQUEST)
     def payload_for_status_notification(self, **kwargs):
         connector = kwargs.get("connector_id", 0)
         status = kwargs.get("status", ChargePointStatus.available)
@@ -40,7 +41,7 @@ class CoreFeature:
             connector_id=connector, status=status, error_code=error_code, info=info
         )
 
-    @handler(Action.StartTransaction, HandlerType.CALL_FACTORY)
+    @handler(Action.StartTransaction, HandlerType.BEFORE_REQUEST)
     def payload_for_start_transaction(self, **kwargs):
         start = kwargs.get("meter_start", 0)
         rfid = kwargs.get("rfid", "superrfid")
@@ -52,21 +53,23 @@ class CoreFeature:
             timestamp=str(datetime.now()),
         )
 
-    @handler(Action.StartTransaction, HandlerType.CALL_RESULT_PAYLOAD)
+    @handler(Action.StartTransaction, HandlerType.FOLLOW_REQUEST)
     def handle_start_transaction_response(self, payload):
         # check whether StartTransaction was accepted or not and retrieve
         # transaction id
         pass
 
-    @on(Action.ChangeConfiguration)
-    def on_change_configuration(key: str, value: Any):
-        return call_result.ChangeConfigurationPayload()
+    @handler(Action.ChangeConfiguration, HandlerType.ON_REQUEST)
+    def on_change_configuration(self, key: str, value: Any):
+        return call_result.ChangeConfigurationPayload(
+            status=call_result.ConfigurationStatus.accepted
+        )
 
-    @on(Action.GetConfiguration)
+    @handler(Action.GetConfiguration, HandlerType.ON_REQUEST)
     def on_get_configuration(key: Optional[List] = None):
         return call_result.GetConfigurationPayload()
 
-    @on(Action.RemoteStartTransaction)
+    @handler(Action.RemoteStartTransaction, HandlerType.ON_REQUEST)
     def on_remote_start_transaction(
         id_tag: str,
         connector_id: Optional[int] = None,
@@ -74,22 +77,22 @@ class CoreFeature:
     ):
         return call_result.RemoteStartTransactionPayload()
 
-    @after(Action.RemoteStartTransaction)
+    @handler(Action.RemoteStartTransaction, HandlerType.FOLLOW_REQUEST)
     def on_remote_start_transaction():
         pass
 
-    @on(Action.RemoteStopTransaction)
+    @handler(Action.RemoteStopTransaction, HandlerType.ON_REQUEST)
     def on_remote_stop_transaction(transaction_id: str):
         return call_result.RemoteStopTransactionPayload()
 
-    @after(Action.RemoteStopTransaction)
+    @handler(Action.RemoteStopTransaction, HandlerType.FOLLOW_REQUEST)
     def on_remote_stop_transaction():
         pass
 
-    @on(Action.Reset)
+    @handler(Action.Reset, HandlerType.ON_REQUEST)
     def on_reset(type: ResetType):
         return call_result.ResetPayload()
 
-    @after(Action.Reset)
+    @handler(Action.Reset, HandlerType.FOLLOW_REQUEST)
     def after_reset():
         pass

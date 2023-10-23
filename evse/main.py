@@ -2,10 +2,11 @@ import asyncio
 from copy import copy
 from typing import Optional
 
-import controller
 from fastapi import FastAPI, HTTPException, status
 from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
 from structlog import get_logger
+
+import controller
 
 L = get_logger(__name__)
 

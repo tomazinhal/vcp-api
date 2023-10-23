@@ -9,10 +9,14 @@ L = structlog.get_logger(__name__)
 
 
 async def echo(websocket):
+    L.debug("receiving")
+    await websocket.send(
+        '[2,"5c7018a3-aa08-421d-b9c2-5dad3d584ec3","TriggerMessage",{"requestedMessage":"BootNotification"}]'
+    )
     async for message in websocket:
         L.debug(f"received '{message}'")
-        L.debug(f"sending  '{message}'")
-        await websocket.send(message)
+        # L.debug(f"sending  '{message}'")
+        # await websocket.send(message)
 
 
 async def main():

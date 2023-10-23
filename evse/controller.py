@@ -1,13 +1,15 @@
+import asyncio
 from typing import List, Optional, Union
 
-import models
 import websockets
-from exceptions import NoHandlerImplementedError, NoModelImplementedError
-from handler import ChargerHandler
 from ocpp.messages import Call, CallError, CallResult
 from ocpp.v16.enums import Action
 from structlog import get_logger
 from websockets.client import WebSocketClientProtocol
+
+import models
+from exceptions import NoHandlerImplementedError, NoModelImplementedError
+from handler import ChargerHandler
 
 L = get_logger(__name__)
 
@@ -31,21 +33,11 @@ class EVSE:
             self.handler = ChargerHandler(
                 self.abstraction.id, connection=self.connection, response_timeout=1
             )
-            await self.message_handler()
+            await self.handle_incoming_messages()
         else:
             L.debug("abstraction or connection is not ready")
 
-    async def start(self):
-        try:
-            while True:
-                if self.connection:
-                    L.debug()
-                    await self.connection.recv()
-        except:
-            L.error("E", exc_info=1)
-            self.connection.close()
-
-    def log_payload(self, call):
+    def log_payload(self, call: Call):
         self.exchange_buffer.append(call)
 
     def prepare_payload_for_call(self, action: Action, **kwargs):
@@ -68,6 +60,9 @@ class EVSE:
         except NotImplementedError:
             L.warning("Can't send Call for %s", action)
             return
+        await self.send_controlled_call(action, payload)
+
+    async def send_controlled_call(self, action: Action, payload):
         call_gen = self.handler.call_generator(payload)
         try:
             call = await call_gen.__anext__()
@@ -90,31 +85,55 @@ class EVSE:
             L.debug(e)
         return False
 
-    async def message_handler(self):
+    async def handle_incoming_messages(self):
         while True:
-            message = await self.connection.recv()
             message_handled: bool = False
+            message = await self.connection.recv()
             L.info("%s: received message %s", self.abstraction.id, message)
+            route_message_generator = self.handler.route_message(message)
             try:
-                route_message_generator = self.handler.route_message(message)
-                # validate info with abstraction
+                # fetch message
                 msg: Union[
                     Call, CallError, CallResult
                 ] = await route_message_generator.__anext__()
-                self.abstraction.handle(msg)
-                await route_message_generator.__anext__()
+                self.log_payload(msg)
+                try:
+                    self.abstraction.on_request_handle(msg)
+                except NoModelImplementedError:
+                    L.debug(f"Abstraction does not 'on' handle {msg.action}")
+                # send reply or handle received response
+                response = await route_message_generator.__anext__()
                 message_handled = True
             except StopAsyncIteration:
-                L.info("handling received message finished")
-            try:
-                # handle after action
-                # i.e. after TriggerMessage being accepted we need to
-                # act on the requested message.
+                message_handled = True
+            except Exception as e:
+                L.critical("Fatal error while handling message", exc_info=e)
                 if not message_handled:
                     L.info("Message %s not handled so nothing to after.", message)
                     return
-            except Exception:
-                L.info("after handling received message finished")
+            asyncio.create_task(self.follow_incoming_messages(msg, response))
+
+    async def follow_incoming_messages(
+        self,
+        msg: Union[Call, CallError, CallResult],
+        response: Union[CallError, CallResult, None],
+    ):
+        """
+        After a messages has been sent or a Call has been replied to,
+        some action may be required to complete the expected flow.
+
+        i.e:
+            If a CSMS sends a TriggerMessage.BootNotification, the
+            CP should reply whether it accepts this TriggerMessage or not.
+            If it accepts the TriggerMessage, then a BootNotification should
+            be sent as soon as possible.
+        """
+        if not hasattr(msg, "action"):
+            return
+        payload = self.abstraction.follow_up_handle(msg, response)
+        msg = await self.handler._follow_request_call(msg.action, payload)
+        await self.send_controlled_call(msg.action, payload)
+        # may do nothing since it's not required
 
     async def create_ws_connection(self, backend_url):
         backend_url = "/".join([backend_url, self.abstraction.id])

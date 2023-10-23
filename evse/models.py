@@ -2,11 +2,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Union
 
-from exceptions import NoModelImplementedError
-from model_payload_factories.core import Core
 from ocpp.messages import Call, CallError, CallResult
 from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
 from structlog import get_logger
+
+from exceptions import NoModelImplementedError
+from model_payload_factories.core import Core
 from utils import HandlerType, create_route_map
 
 L = get_logger(__name__)
@@ -67,6 +68,7 @@ class Charger(Core):
     heartbeat_interval: int
     meter_values_interval: int
     meter_values_sample_data: List
+    configuration: Dict
     # features
     supports_core: bool = True
     supports_smart_charging: bool = True
@@ -82,20 +84,24 @@ class Charger(Core):
         status: Optional[ChargePointStatus] = None,
         error: Optional[ChargePointErrorCode] = None,
     ):
+        super().__init__()
         self.ready = False
         self.id = charger_id
         self.number_connectors = number_connectors
         self.connectors = [Connector(i + 1) for i in range(number_connectors)]
         self.status = ChargePointStatus.available
         self.error = ChargePointErrorCode.no_error
-        self.heartbeat_interval = 60
-        self.meter_values_interval = 30
-        self.meter_values_sample_data = ["Power.Active.Import"]
-        self.action_payload_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.CALL_FACTORY
+        self.before_request_map: Dict[Action, Callable] = create_route_map(
+            self, HandlerType.BEFORE_REQUEST
         )
-        self.response_handler_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.CALL_RESULT_PAYLOAD
+        self.follow_up_handler_map: Dict[Action, Callable] = create_route_map(
+            self, HandlerType.FOLLOW_REQUEST
+        )
+        self.on_request_map: Dict[Action, Callable] = create_route_map(
+            self, HandlerType.ON_REQUEST
+        )
+        self.after_response_map: Dict[Action, Callable] = create_route_map(
+            self, HandlerType.AFTER_RESPONSE
         )
         L.debug("Charger %s with %s connectors", self.id, self.number_connectors)
 
@@ -114,7 +120,7 @@ class Charger(Core):
 
     @classmethod
     def simple(cls):
-        charger = cls("supercharger", 1)
+        charger = cls("taf", 1)
         charger.ready = True
         return charger
 
@@ -124,14 +130,31 @@ class Charger(Core):
         charger.ready = True
         return charger
 
-    def handle(self, msg: Union[Call, CallError, CallResult]):
-        L.debug("Handling message %s", msg)
+    def on_request_handle(self, msg: Union[Call, CallError, CallResult]):
+        L.debug("on_request_handle message %s", msg)
+        try:
+            return self.on_request_map[msg.action](msg.payload)
+        except KeyError:
+            raise NoModelImplementedError(
+                "Nothing to do from models side for %s", msg.action
+            )
+
+    def follow_up_handle(
+        self,
+        msg: Union[Call, CallError, CallResult],
+        response: Union[CallError, CallResult, None],
+    ):
+        L.debug("follow_up_handle message %s", msg)
+        try:
+            return self.follow_up_handler_map[msg.action](msg.payload)
+        except KeyError:
+            L.debug(f"Abstraction does not 'follow' handle {msg.action}")
 
     def create_data_for_payload(self, action, **kwargs):
         L.debug("Action: %s", action)
         L.debug("Kwargs %s", kwargs)
         try:
-            return self.action_payload_map[action](**kwargs)
+            return self.before_request_map[action](**kwargs)
         except KeyError:
             raise NoModelImplementedError(
                 "Nothing to do from models side for %s", action
@@ -149,9 +172,8 @@ class Charger(Core):
         action = response.action
         payload = response.payload
         try:
-            return self.action_payload_map[action](payload)
+            return self.before_request_map[action](payload)
         except KeyError:
             raise NoModelImplementedError(
                 "Nothing to do from models side for %s", action
             )
-        L.debug("response created: %s", response)
