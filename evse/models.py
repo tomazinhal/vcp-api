@@ -2,12 +2,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Union
 
-from ocpp.messages import Call, CallError, CallResult
-from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
-from structlog import get_logger
-
 from exceptions import NoModelImplementedError
 from model_payload_factories.core import Core
+from ocpp.messages import Call, CallError, CallResult, MessageType
+from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
+from structlog import get_logger
 from utils import HandlerType, create_route_map
 
 L = get_logger(__name__)
@@ -71,7 +70,7 @@ class Charger(Core):
     configuration: Dict
     # features
     supports_core: bool = True
-    supports_smart_charging: bool = True
+    supports_smart_charging: bool = False
     supports_remote_trigger: bool = False
     supports_firmware_management: bool = False
     supports_local_auth_management: bool = False
@@ -81,28 +80,31 @@ class Charger(Core):
         self,
         charger_id: str,
         number_connectors: int,
+        password: str | None = None,
         status: Optional[ChargePointStatus] = None,
         error: Optional[ChargePointErrorCode] = None,
     ):
         super().__init__()
         self.ready = False
         self.id = charger_id
+        self.password = password
         self.number_connectors = number_connectors
         self.connectors = [Connector(i + 1) for i in range(number_connectors)]
         self.status = ChargePointStatus.available
         self.error = ChargePointErrorCode.no_error
         self.before_request_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.BEFORE_REQUEST
+            self, HandlerType.BEFORE_CALL_REQUEST_FROM_CP
         )
         self.follow_up_handler_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.FOLLOW_REQUEST
+            self, HandlerType.AFTER_CALL_RESPONSE_FROM_CP
         )
         self.on_request_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.ON_REQUEST
+            self, HandlerType.ON_CALL_REQUEST_FROM_CSMS
         )
         self.after_response_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.AFTER_RESPONSE
+            self, HandlerType.ON_CALL_RESPONSE_FROM_CSMS
         )
+        self.call_message_id_to_action_map: Dict[str, Action] = {}
         L.debug("Charger %s with %s connectors", self.id, self.number_connectors)
 
     @classmethod
@@ -125,19 +127,36 @@ class Charger(Core):
         return charger
 
     @classmethod
-    def create(cls, charger_id: str, number_connectors: int):
-        charger = cls(charger_id, number_connectors)
+    def create(
+        cls, charger_id: str, number_connectors: int, password: str | None = None
+    ):
+        charger = cls(charger_id, number_connectors, password=password)
         charger.ready = True
         return charger
 
     def on_request_handle(self, msg: Union[Call, CallError, CallResult]):
         L.debug("on_request_handle message %s", msg)
         try:
-            return self.on_request_map[msg.action](msg.payload)
+            match msg.message_type_id:
+                case MessageType.Call:
+                    L.debug("Received call")
+                    return self.on_request_map[msg.action](msg.payload)
+                case MessageType.CallResult:
+                    action = self.call_message_id_to_action_map.get(msg.unique_id)
+                    msg.action = action
+                    L.debug(f"Received call result for {action}")
+                    return self.after_response_map[action](msg.payload)
+                case MessageType.CallError:
+                    L.debug("Received call error")
+                    action = self.call_message_id_to_action_map.get(msg.unique_id)
+                    return self.after_response_map[msg.action](msg.payload)
         except KeyError:
             raise NoModelImplementedError(
                 "Nothing to do from models side for %s", msg.action
             )
+        except:
+            L.info("Probably a response that isn't handled.")
+            return None
 
     def follow_up_handle(
         self,
@@ -151,8 +170,6 @@ class Charger(Core):
             L.debug(f"Abstraction does not 'follow' handle {msg.action}")
 
     def create_data_for_payload(self, action, **kwargs):
-        L.debug("Action: %s", action)
-        L.debug("Kwargs %s", kwargs)
         try:
             return self.before_request_map[action](**kwargs)
         except KeyError:
@@ -161,19 +178,12 @@ class Charger(Core):
             )
 
     def handle_created_call(self, call: Call):
-        L.debug("Call created: %s", call)
+        L.debug("Model handle call: %s", call)
 
     def handle_call_response(self, response: Union[Call, CallResult, CallError]):
-        L.debug("Response created: %s", response)
+        L.debug("Model handle call response: %s", response)
 
     def handle_validated_call_response(
         self, response: Union[Call, CallResult, CallError]
     ):
-        action = response.action
-        payload = response.payload
-        try:
-            return self.before_request_map[action](payload)
-        except KeyError:
-            raise NoModelImplementedError(
-                "Nothing to do from models side for %s", action
-            )
+        L.debug("Model validate call response: %s", response)

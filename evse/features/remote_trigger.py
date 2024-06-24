@@ -7,7 +7,6 @@ from ocpp.routing import after, on
 from ocpp.v16 import call, call_result
 from ocpp.v16.enums import Action, MessageTrigger
 from structlog import get_logger
-
 from utils import HandlerType, handler
 
 L = get_logger(__name__)
@@ -16,7 +15,7 @@ L = get_logger(__name__)
 class RemoteTriggerFeature:
     supports_remote_trigger: bool = True
 
-    @handler(Action.TriggerMessage, HandlerType.ON_REQUEST)
+    @handler(Action.TriggerMessage, HandlerType.ON_CALL_REQUEST_FROM_CSMS)
     def on_trigger_message(
         self, requested_message: MessageTrigger, connector_id: Optional[int] = None
     ):
@@ -28,7 +27,7 @@ class RemoteTriggerFeature:
             status=call_result.TriggerMessageStatus.not_implemented
         )
 
-    @handler(Action.TriggerMessage, HandlerType.FOLLOW_REQUEST)
+    @handler(Action.TriggerMessage, HandlerType.AFTER_CALL_RESPONSE_FROM_CP)
     def after_trigger_message(
         self, requested_message: MessageTrigger, connector_id: Optional[int] = None
     ):

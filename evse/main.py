@@ -2,16 +2,14 @@ import asyncio
 from copy import copy
 from typing import Optional
 
+import controller
 from fastapi import FastAPI, HTTPException, status
 from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
 from structlog import get_logger
 
-import controller
-
 L = get_logger(__name__)
 
 BACKENDURL = "ws://localhost:8765"
-
 evse = FastAPI()
 charger = controller.EVSE()
 
@@ -25,8 +23,8 @@ async def whoami():
 
 
 @evse.put("/setup")
-def setup(charger_id: str, number_connectors: int):
-    charger.create(charger_id, number_connectors)
+def setup(charger_id: str, number_connectors: int, password: str):
+    charger.create(charger_id, number_connectors, password)
     return charger.abstraction
 
 
@@ -48,7 +46,7 @@ async def connect(backend_url: str = BACKENDURL):
     try:
         charger.connection = await charger.create_ws_connection(backend_url)
     except ConnectionRefusedError:
-        raise HTTPException(status=status.HTTP_401_UNAUTHORIZEDx)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     asyncio.create_task(charger.run())
 
 

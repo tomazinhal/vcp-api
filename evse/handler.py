@@ -4,6 +4,10 @@ from dataclasses import asdict
 from typing import Callable, Dict, Union
 
 import structlog
+from exceptions import NoHandlerImplementedError
+from features.core import CoreFeature
+from features.remote_trigger import RemoteTriggerFeature
+from features.smart_charging import SmartChargingFeature
 from ocpp.charge_point import camel_to_snake_case, remove_nones, snake_to_camel_case
 from ocpp.exceptions import NotSupportedError, OCPPError
 from ocpp.messages import (
@@ -16,11 +20,6 @@ from ocpp.messages import (
 )
 from ocpp.v16 import ChargePoint
 from ocpp.v16.enums import Action
-
-from exceptions import NoHandlerImplementedError
-from features.core import CoreFeature
-from features.remote_trigger import RemoteTriggerFeature
-from features.smart_charging import SmartChargingFeature
 from utils import HandlerType, create_route_map
 
 L = structlog.get_logger(__name__)
@@ -34,17 +33,17 @@ class ChargerHandler(
             charger_id, connection=connection, response_timeout=response_timeout
         )
         self.action_payload_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.BEFORE_REQUEST
+            self, HandlerType.BEFORE_CALL_REQUEST_FROM_CP
         )
         self.on_request_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.ON_REQUEST
+            self, HandlerType.ON_CALL_REQUEST_FROM_CSMS
         )
         self.after_response_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.AFTER_RESPONSE
+            self, HandlerType.ON_CALL_RESPONSE_FROM_CSMS
         )
 
         self.follow_request_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.FOLLOW_REQUEST
+            self, HandlerType.AFTER_CALL_RESPONSE_FROM_CP
         )
 
     def create_payload(self, action, **kwargs):
@@ -55,12 +54,6 @@ class ChargerHandler(
             raise NoHandlerImplementedError(
                 "Nothing to do from models side for %s", action
             )
-
-    async def __call(self, payload, suppress=True, unique_id=None):
-        call: Call = self.create_call(payload, unique_id)
-        response = await self.send_call(call)
-        validated_payload = self.handle_response(payload, call, response, suppress)
-        return validated_payload
 
     async def call_generator(self, payload, suppress=True, unique_id=None):
         """
@@ -170,6 +163,7 @@ class ChargerHandler(
         Handles a message by using the handler function in `on_request_map`
         and returns a Call | CallError.
         """
+        validate_payload(msg, self._ocpp_version)
         snake_case_payload = camel_to_snake_case(msg.payload)
         try:
             handler = self.on_request_map[msg.action]
@@ -209,9 +203,6 @@ class ChargerHandler(
         3. send_call
         4. follow_request function
         """
-        validate_payload(msg, self._ocpp_version)
-        snake_case_payload = camel_to_snake_case(msg.payload)
-
         handled_output = await self.on_message_handler(
             msg
         )  # on_request_map[msg.action]

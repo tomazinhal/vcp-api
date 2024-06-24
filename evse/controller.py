@@ -1,15 +1,14 @@
 import asyncio
 from typing import List, Optional, Union
 
+import models
 import websockets
+from exceptions import NoHandlerImplementedError, NoModelImplementedError
+from handler import ChargerHandler
 from ocpp.messages import Call, CallError, CallResult
 from ocpp.v16.enums import Action
 from structlog import get_logger
 from websockets.client import WebSocketClientProtocol
-
-import models
-from exceptions import NoHandlerImplementedError, NoModelImplementedError
-from handler import ChargerHandler
 
 L = get_logger(__name__)
 
@@ -25,8 +24,12 @@ class EVSE:
         self.handler = None
         self.connection = None
 
-    def create(self, charger_id: str, number_connectors: int):
-        self.abstraction = models.Charger.create(charger_id, number_connectors)
+    def create(
+        self, charger_id: str, number_connectors: int, password: str | None = None
+    ):
+        self.abstraction = models.Charger.create(
+            charger_id, number_connectors, password
+        )
 
     async def run(self):
         if self.abstraction.ready and await self.is_up():
@@ -40,6 +43,14 @@ class EVSE:
     def log_payload(self, call: Call):
         self.exchange_buffer.append(call)
 
+    async def is_up(self):
+        try:
+            await self.connection.ping()
+            return True
+        except Exception as e:
+            L.debug(e)
+        return False
+
     def prepare_payload_for_call(self, action: Action, **kwargs):
         data = {}
         try:
@@ -52,9 +63,25 @@ class EVSE:
             L.warning("Can not create Call for %s", action)
         raise NotImplementedError
 
+    async def send_controlled_call(self, action: Action, payload):
+        call_gen = self.handler.call_generator(payload)
+        try:
+            call = await call_gen.__anext__()
+            self.abstraction.handle_created_call(call)
+            self.log_payload(call)
+            self.abstraction.call_message_id_to_action_map[call.unique_id] = call.action
+            response = await call_gen.__anext__()
+            self.abstraction.handle_call_response(response)
+            validated_response = await call_gen.__anext__()
+            self.abstraction.handle_validated_call_response(validated_response)
+            L.info("FINISHED SEND CONTROLLED CALL")
+        except StopAsyncIteration:
+            L.warning("Nothing to step into on the async generator")
+        except TimeoutError:
+            L.warning("No response in time for action %s", action)
+
     async def send_message_to_backend(self, action: Action, **kwargs):
-        L.debug("Action: %s", action)
-        L.debug("Kwargs %s", kwargs)
+        L.debug("Action: %s with Kwargs: %s", action, kwargs)
         try:
             payload = self.prepare_payload_for_call(action, **kwargs)
         except NotImplementedError:
@@ -62,46 +89,18 @@ class EVSE:
             return
         await self.send_controlled_call(action, payload)
 
-    async def send_controlled_call(self, action: Action, payload):
-        call_gen = self.handler.call_generator(payload)
-        try:
-            call = await call_gen.__anext__()
-            self.abstraction.handle_created_call(call)
-            self.log_payload(call)
-            response = await call_gen.__anext__()
-            self.abstraction.handle_call_response(response)
-            validated_response = await call_gen.__anext__()
-            self.abstraction.handle_validated_call_response(validated_response)
-        except StopAsyncIteration:
-            L.warning("Nothing to step into on the async generator")
-        except TimeoutError:
-            L.warning("No response in time for action %s", action)
-
-    async def is_up(self):
-        try:
-            await self.connection.ping()
-            return True
-        except Exception as e:
-            L.debug(e)
-        return False
-
     async def handle_incoming_messages(self):
         while True:
             message_handled: bool = False
+            response = None
             message = await self.connection.recv()
             L.info("%s: received message %s", self.abstraction.id, message)
             route_message_generator = self.handler.route_message(message)
             try:
-                # fetch message
                 msg: Union[
                     Call, CallError, CallResult
                 ] = await route_message_generator.__anext__()
                 self.log_payload(msg)
-                try:
-                    self.abstraction.on_request_handle(msg)
-                except NoModelImplementedError:
-                    L.debug(f"Abstraction does not 'on' handle {msg.action}")
-                # send reply or handle received response
                 response = await route_message_generator.__anext__()
                 message_handled = True
             except StopAsyncIteration:
@@ -132,6 +131,8 @@ class EVSE:
             return
         payload = self.abstraction.follow_up_handle(msg, response)
         msg = await self.handler._follow_request_call(msg.action, payload)
+        if msg is None:
+            return
         await self.send_controlled_call(msg.action, payload)
         # may do nothing since it's not required
 
@@ -140,9 +141,19 @@ class EVSE:
         L.debug("Connecting to %s", backend_url)
         try:
             connection = await websockets.client.connect(
-                backend_url, subprotocols=["ocpp1.6"]
+                backend_url,
+                subprotocols=["ocpp1.6"],
+                ssl=None,
+                extra_headers={
+                    "Authorization": websockets.headers.build_authorization_basic(
+                        self.abstraction.id, self.abstraction.password
+                    )
+                },
             )
             return connection
         except:
-            connection.close()
+            try:
+                connection.close()
+            except UnboundLocalError:
+                L.debug("Connection rejected, can't close unopened connection.")
             raise ConnectionRefusedError
