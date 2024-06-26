@@ -28,9 +28,10 @@ class SmartChargingFeature:
             return SetChargingProfilePayload(status="Accepted")
         raise NotSupportedError()
 
-    @on(Action.ClearChargingProfile)
+    @handler(Action.ClearChargingProfile, HandlerType.ON_CALL_REQUEST_FROM_CSMS)
     def on_clear_charging_profile(self):
-        _ = ClearChargingProfilePayload(status=ClearChargingProfileStatus.accepted)
+        if self.support_smart_charging:
+            return ClearChargingProfilePayload(status=ClearChargingProfileStatus.accepted)
         raise NotSupportedError()
 
     @on(Action.GetCompositeSchedule)
