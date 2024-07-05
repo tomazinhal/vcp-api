@@ -4,7 +4,7 @@ from ocpp.v16.enums import Action
 from structlog import get_logger
 from utils import HandlerType, handler
 
-L = get_logger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_FIRMWARE = "virtual firmware 1.0.0"
 DEFAULT_HEARTBEAT_INTERVAL = 3600
@@ -27,7 +27,7 @@ class Core:
 
     @handler(Action.BootNotification, HandlerType.BEFORE_CALL_REQUEST_FROM_CP)
     def payload_for_boot_notification(self, **kwargs):
-        L.info("model boot notification before request from cp")
+        logger.info("model boot notification before request from cp")
         kwargs.update({"firmware": DEFAULT_FIRMWARE})
         return kwargs
 
@@ -50,7 +50,7 @@ class Core:
 
     @handler(Action.GetConfiguration, HandlerType.ON_CALL_REQUEST_FROM_CSMS)
     def handler_for_get_configuration(self, **kwargs):
-        L.info(f"Preparing payload for GetConfiguration with {kwargs}")
+        logger.info(f"Preparing payload for GetConfiguration with {kwargs}")
         kwargs.update(
             {
                 "HeartbeatInterval": self.heartbeat_interval,

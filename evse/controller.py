@@ -10,7 +10,7 @@ from ocpp.v16.enums import Action
 from structlog import get_logger
 from websockets.client import WebSocketClientProtocol
 
-L = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class EVSE:
@@ -38,7 +38,7 @@ class EVSE:
             )
             await self.handle_incoming_messages()
         else:
-            L.debug("abstraction or connection is not ready")
+            logger.debug("abstraction or connection is not ready")
 
     def log_payload(self, call: Call):
         self.exchange_buffer.append(call)
@@ -48,19 +48,20 @@ class EVSE:
             await self.connection.ping()
             return True
         except Exception as e:
-            L.debug(e)
+            logger.debug(e)
         return False
 
     def prepare_payload_for_call(self, action: Action, **kwargs):
+        """Prepare a Call originating from the CS."""
         data = {}
         try:
             data = self.abstraction.create_data_for_payload(action, **kwargs)
         except NoModelImplementedError:
-            L.warning("Action %s is not implemented", action)
+            logger.warning("Action %s is not implemented", action)
         try:
             return self.handler.create_payload(action, **data)
         except NoHandlerImplementedError:
-            L.warning("Can not create Call for %s", action)
+            logger.warning("Can not create Call for %s", action)
         raise NotImplementedError
 
     async def send_controlled_call(self, action: Action, payload):
@@ -71,30 +72,29 @@ class EVSE:
             self.log_payload(call)
             self.abstraction.call_message_id_to_action_map[call.unique_id] = call.action
             response = await call_gen.__anext__()
-            self.abstraction.handle_call_response(response)
-            validated_response = await call_gen.__anext__()
-            self.abstraction.handle_validated_call_response(validated_response)
-            L.info("FINISHED SEND CONTROLLED CALL")
+            self.abstraction.handle_validated_call_response(response)
+            logger.info("FINISHED SEND CONTROLLED CALL")
         except StopAsyncIteration:
-            L.warning("Nothing to step into on the async generator")
+            logger.warning("Nothing to step into on the async generator")
         except TimeoutError:
-            L.warning("No response in time for action %s", action)
+            logger.warning("No response in time for action %s", action)
 
     async def send_message_to_backend(self, action: Action, **kwargs):
-        L.debug("Action: %s with Kwargs: %s", action, kwargs)
+        logger.debug("Action: %s with Kwargs: %s", action, kwargs)
         try:
             payload = self.prepare_payload_for_call(action, **kwargs)
         except NotImplementedError:
-            L.warning("Can't send Call for %s", action)
+            logger.warning("Can't send Call for %s", action)
             return
         await self.send_controlled_call(action, payload)
 
     async def handle_incoming_messages(self):
+        """Listener Calls from the CSMS."""
         while True:
             message_handled: bool = False
             response = None
             message = await self.connection.recv()
-            L.info("%s: received message %s", self.abstraction.id, message)
+            logger.info("%s: received message %s", self.abstraction.id, message)
             route_message_generator = self.handler.route_message(message)
             try:
                 msg: Union[
@@ -106,9 +106,9 @@ class EVSE:
             except StopAsyncIteration:
                 message_handled = True
             except Exception as e:
-                L.critical("Fatal error while handling message", exc_info=e)
+                logger.critical("Fatal error while handling message", exc_info=e)
                 if not message_handled:
-                    L.info("Message %s not handled so nothing to after.", message)
+                    logger.info("Message %s not handled so nothing to after.", message)
                     return
             asyncio.create_task(self.follow_incoming_messages(msg, response))
 
@@ -138,7 +138,7 @@ class EVSE:
 
     async def create_ws_connection(self, backend_url):
         backend_url = "/".join([backend_url, self.abstraction.id])
-        L.debug("Connecting to %s", backend_url)
+        logger.debug("Connecting to %s", backend_url)
         try:
             connection = await websockets.client.connect(
                 backend_url,
@@ -155,5 +155,5 @@ class EVSE:
             try:
                 connection.close()
             except UnboundLocalError:
-                L.debug("Connection rejected, can't close unopened connection.")
+                logger.debug("Connection rejected, can't close unopened connection.")
             raise ConnectionRefusedError

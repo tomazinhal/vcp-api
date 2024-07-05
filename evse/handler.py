@@ -22,7 +22,7 @@ from ocpp.v16 import ChargePoint
 from ocpp.v16.enums import Action
 from utils import HandlerType, create_route_map
 
-L = structlog.get_logger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ChargerHandler(
@@ -48,7 +48,7 @@ class ChargerHandler(
 
     def create_payload(self, action, **kwargs):
         try:
-            L.info(f"making payload for {action}")
+            logger.info(f"making payload for {action}")
             return self.action_payload_map[action](**kwargs)
         except KeyError:
             raise NoHandlerImplementedError(
@@ -59,13 +59,11 @@ class ChargerHandler(
         """
         Generator that yields control:
         1. after Call for request is created
-        2. after response for a Call is received
         3. after response for a Call is validated
         """
         call: Call = self.create_call(payload, unique_id)
         yield call
         response = await self.send_call(call)
-        yield response
         validated_response = self.handle_response(payload, call, response, suppress)
         yield validated_response
 
@@ -94,10 +92,10 @@ class ChargerHandler(
         # a time.
         async with self._call_lock:
             message = call.to_json()
-            L.debug("%s: sending %s", self.id, message)
+            logger.debug("%s: sending %s", self.id, message)
             await self._send(message)
             if isinstance(call, CallError) or isinstance(call, CallResult):
-                L.debug("Message is CallError | CallResult - not expecting reply")
+                logger.debug("Message is CallError | CallResult - not expecting reply")
                 return
             try:
                 response = await self._get_specific_response(
@@ -118,7 +116,7 @@ class ChargerHandler(
 
         """
         if response.message_type_id == MessageType.CallError:
-            L.warning("Received a CALLError: %s'", response)
+            logger.warning("Received a CALLError: %s'", response)
             if suppress:
                 return
             raise response.to_exception()
@@ -138,7 +136,7 @@ class ChargerHandler(
         try:
             msg: Union[Call, CallError, CallResult] = unpack(raw_msg)
         except OCPPError as e:
-            L.exception(
+            logger.exception(
                 "Unable to parse message: '%s', it doesn't seem "
                 "to be valid OCPP: %s",
                 raw_msg,
@@ -149,9 +147,9 @@ class ChargerHandler(
         if msg.message_type_id == MessageType.Call:
             try:
                 await self._handle_call(msg)
-                L.info("HANDLED %s", msg)
+                logger.info("HANDLED %s", msg)
             except OCPPError as error:
-                L.exception("Error while handling request '%s'", msg)
+                logger.exception("Error while handling request '%s'", msg)
                 response = msg.create_call_error(error).to_json()
                 await self._send(response)
         elif msg.message_type_id in [MessageType.CallResult, MessageType.CallError]:
@@ -178,7 +176,7 @@ class ChargerHandler(
                 response = await response
             return response
         except Exception as e:
-            L.exception("Error while handling request '%s'", msg)
+            logger.exception("Error while handling request '%s'", msg)
             response = msg.create_call_error(e)
             return response
 
@@ -207,7 +205,7 @@ class ChargerHandler(
             msg
         )  # on_request_map[msg.action]
         response = self.prepare_response(msg, handled_output)
-        L.debug("call: %s", response)
+        logger.debug("call: %s", response)
         await self.send_call(response)
 
     async def _follow_request_call(self, action: Action, payload):
@@ -221,4 +219,4 @@ class ChargerHandler(
         except KeyError:
             # '_on_after' hooks are not required. Therefore ignore exception
             # when no '_on_after' hook is installed.
-            L.debug(f"There is nothing to do after {action}")
+            logger.debug(f"There is nothing to do after {action}")

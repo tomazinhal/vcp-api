@@ -14,7 +14,7 @@ from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus, Rese
 from structlog import get_logger
 from utils import HandlerType, handler
 
-L = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CoreFeature:
@@ -25,7 +25,7 @@ class CoreFeature:
         vendor = data.get("charge_point_vendor", "unknown")
         # get other optional attributes like firmware...
         firmware = data.get("firmware", None)
-        L.debug("feature handler for bootnitifacion")
+        logger.debug("feature handler for bootnitifacion")
         return call.BootNotificationPayload(
             charge_point_model=model,
             charge_point_vendor=vendor,
@@ -66,7 +66,7 @@ class CoreFeature:
     @handler(Action.BootNotification, HandlerType.ON_CALL_RESPONSE_FROM_CSMS)
     def handle_boot_notification_response(self, **kwargs):
         # do something with the time sync provided by csms
-        L.warning("After receiving BootNotification.CallResult")
+        logger.warning("After receiving BootNotification.CallResult")
 
     @handler(Action.ChangeConfiguration, HandlerType.ON_CALL_REQUEST_FROM_CSMS)
     def on_change_configuration(self, key: str, value: Any):
@@ -76,7 +76,7 @@ class CoreFeature:
 
     @handler(Action.GetConfiguration, HandlerType.ON_CALL_REQUEST_FROM_CSMS)
     def on_get_configuration(self, **kwargs):
-        L.info(f"On get config with {kwargs}")
+        logger.info(f"On get config with {kwargs}")
         config = {
             "HeartbeatInterval": 100,
             "MeterValuesSampledData": 10,

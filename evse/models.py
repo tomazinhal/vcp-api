@@ -9,7 +9,7 @@ from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
 from structlog import get_logger
 from utils import HandlerType, create_route_map
 
-L = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -105,7 +105,7 @@ class Charger(Core):
             self, HandlerType.ON_CALL_RESPONSE_FROM_CSMS
         )
         self.call_message_id_to_action_map: Dict[str, Action] = {}
-        L.debug("Charger %s with %s connectors", self.id, self.number_connectors)
+        logger.debug("Charger %s with %s connectors", self.id, self.number_connectors)
 
     @classmethod
     def empty(cls):
@@ -117,7 +117,7 @@ class Charger(Core):
         charger.supports_local_auth_management = False
         charger.supports_reservation = False
         charger.ready = False
-        L.debug("Created empty Charger")
+        logger.debug("Created empty Charger")
         return charger
 
     @classmethod
@@ -135,19 +135,19 @@ class Charger(Core):
         return charger
 
     def on_request_handle(self, msg: Union[Call, CallError, CallResult]):
-        L.debug("on_request_handle message %s", msg)
+        logger.debug("on_request_handle message %s", msg)
         try:
             match msg.message_type_id:
                 case MessageType.Call:
-                    L.debug("Received call")
+                    logger.debug("Received call")
                     return self.on_request_map[msg.action](msg.payload)
                 case MessageType.CallResult:
                     action = self.call_message_id_to_action_map.get(msg.unique_id)
                     msg.action = action
-                    L.debug(f"Received call result for {action}")
+                    logger.debug(f"Received call result for {action}")
                     return self.after_response_map[action](msg.payload)
                 case MessageType.CallError:
-                    L.debug("Received call error")
+                    logger.debug("Received call error")
                     action = self.call_message_id_to_action_map.get(msg.unique_id)
                     return self.after_response_map[msg.action](msg.payload)
         except KeyError:
@@ -155,7 +155,7 @@ class Charger(Core):
                 "Nothing to do from models side for %s", msg.action
             )
         except:
-            L.info("Probably a response that isn't handled.")
+            logger.info("Probably a response that isn't handled.")
             return None
 
     def follow_up_handle(
@@ -163,11 +163,11 @@ class Charger(Core):
         msg: Union[Call, CallError, CallResult],
         response: Union[CallError, CallResult, None],
     ):
-        L.debug("follow_up_handle message %s", msg)
+        logger.debug("follow_up_handle message %s", msg)
         try:
             return self.follow_up_handler_map[msg.action](msg.payload)
         except KeyError:
-            L.debug(f"Abstraction does not 'follow' handle {msg.action}")
+            logger.debug(f"Abstraction does not 'follow' handle {msg.action}")
 
     def create_data_for_payload(self, action, **kwargs):
         try:
@@ -178,12 +178,12 @@ class Charger(Core):
             )
 
     def handle_created_call(self, call: Call):
-        L.debug("Model handle call: %s", call)
+        logger.debug("Model handle call: %s", call)
 
     def handle_call_response(self, response: Union[Call, CallResult, CallError]):
-        L.debug("Model handle call response: %s", response)
+        logger.debug("Model handle call response: %s", response)
 
     def handle_validated_call_response(
         self, response: Union[Call, CallResult, CallError]
     ):
-        L.debug("Model validate call response: %s", response)
+        logger.debug("Model validate call response: %s", response)

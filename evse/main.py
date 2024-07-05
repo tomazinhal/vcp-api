@@ -7,9 +7,9 @@ from fastapi import FastAPI, HTTPException, status
 from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
 from structlog import get_logger
 
-L = get_logger(__name__)
+logger = get_logger(__name__)
 
-BACKENDURL = "ws://localhost:8765"
+BACKENDURlogger = "ws://localhost:8765"
 evse = FastAPI()
 charger = controller.EVSE()
 
@@ -18,7 +18,7 @@ charger = controller.EVSE()
 async def whoami():
     abstraction = copy(charger.abstraction)
     connected = await charger.is_up()
-    L.info("Charger %s is %s", abstraction.id, "up" if connected else "not up")
+    logger.info("Charger %s is %s", abstraction.id, "up" if connected else "not up")
     return abstraction
 
 

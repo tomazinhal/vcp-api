@@ -1,6 +1,5 @@
 import orjson
 import pytest
-
 from model_payload_factories import Charger
 
 

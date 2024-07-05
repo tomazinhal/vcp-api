@@ -3,7 +3,7 @@ from enum import Enum
 
 from structlog import get_logger
 
-L = get_logger(__name__)
+logger = get_logger(__name__)
 
 routables = []
 
@@ -56,5 +56,5 @@ def create_route_map(obj, handler: HandlerType):
 
         except AttributeError:
             continue
-    L.debug(f"Routes for {handler} are {routes}")
+    logger.debug(f"Routes for {handler} are {routes}")
     return routes

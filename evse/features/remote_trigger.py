@@ -9,7 +9,7 @@ from ocpp.v16.enums import Action, MessageTrigger
 from structlog import get_logger
 from utils import HandlerType, handler
 
-L = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class RemoteTriggerFeature:
