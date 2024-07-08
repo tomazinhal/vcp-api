@@ -4,6 +4,7 @@ from typing import Callable, Dict, List, Optional, Union
 
 from exceptions import NoModelImplementedError
 from model_payload_factories.core import Core
+from model_payload_factories.remote_trigger import RemoteTriggerFeature
 from ocpp.messages import Call, CallError, CallResult, MessageType
 from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
 from structlog import get_logger
@@ -55,7 +56,7 @@ class Connector:
 
 
 @dataclass
-class Charger(Core):
+class Charger(Core, RemoteTriggerFeature):
     ready: bool
     """ready: whether the model is ready to be used for a handler"""
     id: str
@@ -71,7 +72,7 @@ class Charger(Core):
     # features
     supports_core: bool = True
     supports_smart_charging: bool = False
-    supports_remote_trigger: bool = False
+    supports_remote_trigger: bool = True
     supports_firmware_management: bool = False
     supports_local_auth_management: bool = False
     supports_reservation: bool = False
@@ -92,17 +93,17 @@ class Charger(Core):
         self.connectors = [Connector(i + 1) for i in range(number_connectors)]
         self.status = ChargePointStatus.available
         self.error = ChargePointErrorCode.no_error
-        self.before_request_map: Dict[Action, Callable] = create_route_map(
+        self.action_payload_map: Dict[Action, Callable] = create_route_map(
             self, HandlerType.BEFORE_CALL_REQUEST_FROM_CP
         )
-        self.follow_up_handler_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.AFTER_CALL_RESPONSE_FROM_CP
+        self.after_response_map: Dict[Action, Callable] = create_route_map(
+            self, HandlerType.ON_CALL_RESPONSE_FROM_CSMS
         )
         self.on_request_map: Dict[Action, Callable] = create_route_map(
             self, HandlerType.ON_CALL_REQUEST_FROM_CSMS
         )
-        self.after_response_map: Dict[Action, Callable] = create_route_map(
-            self, HandlerType.ON_CALL_RESPONSE_FROM_CSMS
+        self.follow_request_map: Dict[Action, Callable] = create_route_map(
+            self, HandlerType.AFTER_CALL_RESPONSE_FROM_CP
         )
         self.call_message_id_to_action_map: Dict[str, Action] = {}
         logger.debug("Charger %s with %s connectors", self.id, self.number_connectors)
@@ -134,44 +135,9 @@ class Charger(Core):
         charger.ready = True
         return charger
 
-    def on_request_handle(self, msg: Union[Call, CallError, CallResult]):
-        logger.debug("on_request_handle message %s", msg)
-        try:
-            match msg.message_type_id:
-                case MessageType.Call:
-                    logger.debug("Received call")
-                    return self.on_request_map[msg.action](msg.payload)
-                case MessageType.CallResult:
-                    action = self.call_message_id_to_action_map.get(msg.unique_id)
-                    msg.action = action
-                    logger.debug(f"Received call result for {action}")
-                    return self.after_response_map[action](msg.payload)
-                case MessageType.CallError:
-                    logger.debug("Received call error")
-                    action = self.call_message_id_to_action_map.get(msg.unique_id)
-                    return self.after_response_map[msg.action](msg.payload)
-        except KeyError:
-            raise NoModelImplementedError(
-                "Nothing to do from models side for %s", msg.action
-            )
-        except:
-            logger.info("Probably a response that isn't handled.")
-            return None
-
-    def follow_up_handle(
-        self,
-        msg: Union[Call, CallError, CallResult],
-        response: Union[CallError, CallResult, None],
-    ):
-        logger.debug("follow_up_handle message %s", msg)
-        try:
-            return self.follow_up_handler_map[msg.action](msg.payload)
-        except KeyError:
-            logger.debug(f"Abstraction does not 'follow' handle {msg.action}")
-
     def create_data_for_payload(self, action, **kwargs):
         try:
-            return self.before_request_map[action](**kwargs)
+            return self.action_payload_map[action](**kwargs)
         except KeyError:
             raise NoModelImplementedError(
                 "Nothing to do from models side for %s", action
@@ -187,3 +153,16 @@ class Charger(Core):
         self, response: Union[Call, CallResult, CallError]
     ):
         logger.debug("Model validate call response: %s", response)
+
+    def receive_csms_call(self, message):
+        try:
+            self.on_request_map[message.action](message.payload)
+        except (KeyError, NotImplementedError):
+            logger.debug(f"Abstraction.{message.action}.on_request not implemented.")
+
+    def after_cs_response(self, request: Call, response: Union[CallResult, CallError]):
+        try:
+            logger.debug(f"Checking abstraction.{request.action}.after_request.")
+            return self.follow_request_map[request.action](request, response)
+        except (KeyError, NotImplementedError):
+            logger.debug(f"Abstraction.{request.action}.after_request not implemented.")

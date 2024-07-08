@@ -21,7 +21,7 @@ class HandlerType(Enum):
     Handlers can be linked to an abstraction and a handler.
     """
 
-    BEFORE_CALL_REQUEST_FROM_CP = "request_from_cp"
+    BEFORE_CALL_REQUEST_FROM_CP = "request_from_cs"
     ON_CALL_RESPONSE_FROM_CSMS = "response_from_csms"
     ON_CALL_REQUEST_FROM_CSMS = "request_from_csms"
     AFTER_CALL_RESPONSE_FROM_CP = "response_from_cs"
@@ -51,10 +51,11 @@ def create_route_map(obj, handler: HandlerType):
 
             if action not in routes:
                 routes[action] = {}
-
             routes[action] = attr
 
         except AttributeError:
             continue
-    logger.debug(f"Routes for {handler} are {routes}")
+    logger.debug(
+        f"Routes for {obj.__class__.__name__}.{handler.value} are {[str(route) for route in routes]}"
+    )
     return routes

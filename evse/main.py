@@ -9,7 +9,7 @@ from structlog import get_logger
 
 logger = get_logger(__name__)
 
-BACKENDURlogger = "ws://localhost:8765"
+BACKENDURL = "ws://localhost:8765"
 evse = FastAPI()
 charger = controller.EVSE()
 

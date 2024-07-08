@@ -25,6 +25,7 @@ class Core:
         self.meter_values_sample_data = DEFAULT_METER_VALUES_SAMPLE_INTERVAL
         self.configuration = {}
 
+    # --------------- SENDING CALLS FROM THE CHARGE POINT
     @handler(Action.BootNotification, HandlerType.BEFORE_CALL_REQUEST_FROM_CP)
     def payload_for_boot_notification(self, **kwargs):
         logger.info("model boot notification before request from cp")
@@ -32,17 +33,14 @@ class Core:
         return kwargs
 
     @handler(Action.Heartbeat, HandlerType.BEFORE_CALL_REQUEST_FROM_CP)
-    def opayload_for__heartbeat(self, **kwargs):
+    def payload_for_heartbeat(self, **kwargs):
         return {}
 
     @handler(Action.StatusNotification, HandlerType.BEFORE_CALL_REQUEST_FROM_CP)
     def payload_for_status_notification(self, **kwargs):
         return kwargs
 
-    @handler(Action.StartTransaction, HandlerType.AFTER_CALL_RESPONSE_FROM_CP)
-    def handler_for_start_transaction_response(self, payload):
-        pass
-
+    # --------------- RECEIVING CALLS FROM THE CENTRAL SYSTEM
     @handler(Action.ChangeConfiguration, HandlerType.ON_CALL_REQUEST_FROM_CSMS)
     def handler_for_change_configuration(self, key: str, value: str):
         self.configuration[key] = value
@@ -61,3 +59,8 @@ class Core:
             }
         )
         return kwargs
+
+    # --------------- ACTIONS AFTER REPLYING TO CENTRAL SYSTEM
+    @handler(Action.StartTransaction, HandlerType.AFTER_CALL_RESPONSE_FROM_CP)
+    def handler_for_start_transaction_response(self, payload):
+        pass

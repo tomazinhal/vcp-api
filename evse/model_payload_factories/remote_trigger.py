@@ -5,7 +5,6 @@ from typing import Optional, Union
 
 from ocpp.charge_point import camel_to_snake_case
 from ocpp.messages import Call, CallError, CallResult
-from ocpp.routing import after, on
 from ocpp.v16 import call, call_result
 from ocpp.v16.enums import Action, MessageTrigger
 from structlog import get_logger
@@ -21,13 +20,9 @@ class RemoteTriggerFeature:
     def on_trigger_message(
         self, requested_message: MessageTrigger, connector_id: Optional[int] = None
     ):
+        logger.debug(f"Abstraction handles remote trigger here for {requested_message}")
         if not self.supports_remote_trigger:
-            return call_result.TriggerMessagePayload(
-                status=call_result.TriggerMessageStatus.not_implemented
-            )
-        return call_result.TriggerMessagePayload(
-            status=call_result.TriggerMessageStatus.accepted
-        )
+            logger.info("does not support after trigger message")
 
     @handler(Action.TriggerMessage, HandlerType.AFTER_CALL_RESPONSE_FROM_CP)
     def after_trigger_message(
@@ -37,12 +32,13 @@ class RemoteTriggerFeature:
             **camel_to_snake_case(request.payload)
         )
         if not self.supports_remote_trigger:
+            logger.info("No support for TriggerMessage.")
             return
         match trigger_message.requested_message:
             case MessageTrigger.boot_notification:
-                return self.boot_notification_payload(**kwargs)
+                return self.payload_for_boot_notification(**kwargs)
             case MessageTrigger.status_notification:
-                return self.status_notification_payload(**kwargs)
+                return self.payload_for_status_notification(**kwargs)
             case _:
                 """
                 - MessageTrigger.heartbeat

@@ -5,7 +5,15 @@ import models
 import websockets
 from exceptions import NoHandlerImplementedError, NoModelImplementedError
 from handler import ChargerHandler
-from ocpp.messages import Call, CallError, CallResult
+from ocpp.exceptions import OCPPError
+from ocpp.messages import (
+    Call,
+    CallError,
+    CallResult,
+    MessageType,
+    unpack,
+    validate_payload,
+)
 from ocpp.v16.enums import Action
 from structlog import get_logger
 from websockets.client import WebSocketClientProtocol
@@ -36,7 +44,7 @@ class EVSE:
             self.handler = ChargerHandler(
                 self.abstraction.id, connection=self.connection, response_timeout=1
             )
-            await self.handle_incoming_messages()
+            await self.incoming_message_handler()
         else:
             logger.debug("abstraction or connection is not ready")
 
@@ -88,33 +96,31 @@ class EVSE:
             return
         await self.send_controlled_call(action, payload)
 
-    async def handle_incoming_messages(self):
+    async def incoming_message_handler(self):
         """Listener Calls from the CSMS."""
         while True:
-            message_handled: bool = False
             response = None
             message = await self.connection.recv()
             logger.info("%s: received message %s", self.abstraction.id, message)
-            route_message_generator = self.handler.route_message(message)
+            msg: Union[Call, CallError, CallResult] = unpack(message)
             try:
-                msg: Union[
-                    Call, CallError, CallResult
-                ] = await route_message_generator.__anext__()
-                self.log_payload(msg)
-                response = await route_message_generator.__anext__()
-                message_handled = True
-            except StopAsyncIteration:
-                message_handled = True
-            except Exception as e:
-                logger.critical("Fatal error while handling message", exc_info=e)
-                if not message_handled:
-                    logger.info("Message %s not handled so nothing to after.", message)
-                    return
-            asyncio.create_task(self.follow_incoming_messages(msg, response))
+                validate_payload(msg, ocpp_version=self.handler._ocpp_version)
+            except OCPPError as error:
+                response = msg.create_call_error(error).to_json()
+                await self.handler._send(response)
+                return
+            self.log_payload(msg)
+            match msg.message_type_id:
+                case MessageType.Call:
+                    self.abstraction.receive_csms_call(msg)
+                    response = await self.handler.handle_csms_call(msg)
+                    asyncio.create_task(self.follow_incoming_messages(msg, response))
+                case MessageType.CallResult | MessageType.CallError:
+                    self.handler.put_in_response_queue(msg)
 
     async def follow_incoming_messages(
         self,
-        msg: Union[Call, CallError, CallResult],
+        message: Union[Call],
         response: Union[CallError, CallResult, None],
     ):
         """
@@ -127,14 +133,18 @@ class EVSE:
             If it accepts the TriggerMessage, then a BootNotification should
             be sent as soon as possible.
         """
-        if not hasattr(msg, "action"):
+        if not hasattr(message, "action"):
+            logger.warning(f"Can not get action from {message.payload}")
             return
-        payload = self.abstraction.follow_up_handle(msg, response)
-        msg = await self.handler._follow_request_call(msg.action, payload)
+        data = self.abstraction.after_cs_response(request=message, response=response)
+        msg = await self.handler.after_cs_response(
+            request=message, response=response, **data
+        )
         if msg is None:
             return
-        await self.send_controlled_call(msg.action, payload)
-        # may do nothing since it's not required
+        send_generator = self.handler.call_generator(payload=msg)
+        async for _ in send_generator:
+            pass
 
     async def create_ws_connection(self, backend_url):
         backend_url = "/".join([backend_url, self.abstraction.id])

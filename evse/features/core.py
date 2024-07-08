@@ -6,9 +6,9 @@ RemoteStop
 Reset
 """
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, Union
 
-from ocpp.routing import after, on
+from ocpp.messages import Call, CallError, CallResult
 from ocpp.v16 import call, call_result
 from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus, ResetType
 from structlog import get_logger
@@ -18,14 +18,17 @@ logger = get_logger(__name__)
 
 
 class CoreFeature:
+    model = "unknown"
+    vendor = "unknown"
+
     # --------------- SENDING CALLS FROM THE CHARGE POINT
     @handler(Action.BootNotification, HandlerType.BEFORE_CALL_REQUEST_FROM_CP)
     def boot_notification_payload(self, **data):
-        model = data.get("charge_point_model", "unknown")
-        vendor = data.get("charge_point_vendor", "unknown")
+        print(data)
+        model = data.get("charge_point_model", self.model)
+        vendor = data.get("charge_point_vendor", self.vendor)
         # get other optional attributes like firmware...
         firmware = data.get("firmware", None)
-        logger.debug("feature handler for bootnitifacion")
         return call.BootNotificationPayload(
             charge_point_model=model,
             charge_point_vendor=vendor,
@@ -109,17 +112,25 @@ class CoreFeature:
 
     # --------------- ACTIONS AFTER REPLYING TO CENTRAL SYSTEM
     @handler(Action.StartTransaction, HandlerType.AFTER_CALL_RESPONSE_FROM_CP)
-    def handle_start_transaction_response(self, payload):
+    def handle_start_transaction_response(
+        self, request: Call, response: Union[CallResult, CallError], **kwargs
+    ):
         pass
 
     @handler(Action.RemoteStartTransaction, HandlerType.AFTER_CALL_RESPONSE_FROM_CP)
-    def on_remote_start_transaction():
+    def on_remote_start_transaction(
+        self, request: Call, response: Union[CallResult, CallError], **kwargs
+    ):
         pass
 
     @handler(Action.RemoteStopTransaction, HandlerType.AFTER_CALL_RESPONSE_FROM_CP)
-    def on_remote_stop_transaction():
+    def on_remote_stop_transaction(
+        self, request: Call, response: Union[CallResult, CallError], **kwargs
+    ):
         pass
 
     @handler(Action.Reset, HandlerType.AFTER_CALL_RESPONSE_FROM_CP)
-    def after_reset():
+    def after_reset(
+        self, request: Call, response: Union[CallResult, CallError], **kwargs
+    ):
         pass

@@ -10,14 +10,7 @@ from features.remote_trigger import RemoteTriggerFeature
 from features.smart_charging import SmartChargingFeature
 from ocpp.charge_point import camel_to_snake_case, remove_nones, snake_to_camel_case
 from ocpp.exceptions import NotSupportedError, OCPPError
-from ocpp.messages import (
-    Call,
-    CallError,
-    CallResult,
-    MessageType,
-    unpack,
-    validate_payload,
-)
+from ocpp.messages import Call, CallError, CallResult, MessageType, validate_payload
 from ocpp.v16 import ChargePoint
 from ocpp.v16.enums import Action
 from utils import HandlerType, create_route_map
@@ -30,7 +23,7 @@ class ChargerHandler(
 ):
     def __init__(self, charger_id, connection, response_timeout=30):
         super().__init__(
-            charger_id, connection=connection, response_timeout=response_timeout
+            id=charger_id, connection=connection, response_timeout=response_timeout
         )
         self.action_payload_map: Dict[Action, Callable] = create_route_map(
             self, HandlerType.BEFORE_CALL_REQUEST_FROM_CP
@@ -128,33 +121,8 @@ class ChargerHandler(
         cls = getattr(self._call_result, payload.__class__.__name__)  # noqa
         return cls(**snake_case_payload)
 
-    async def route_message(self, raw_msg):
-        """
-        Parses any messages received and forwards it to the right route for
-        handling the specific message.
-        """
-        try:
-            msg: Union[Call, CallError, CallResult] = unpack(raw_msg)
-        except OCPPError as e:
-            logger.exception(
-                "Unable to parse message: '%s', it doesn't seem "
-                "to be valid OCPP: %s",
-                raw_msg,
-                e,
-            )
-            return
-        yield msg
-        if msg.message_type_id == MessageType.Call:
-            try:
-                await self._handle_call(msg)
-                logger.info("HANDLED %s", msg)
-            except OCPPError as error:
-                logger.exception("Error while handling request '%s'", msg)
-                response = msg.create_call_error(error).to_json()
-                await self._send(response)
-        elif msg.message_type_id in [MessageType.CallResult, MessageType.CallError]:
-            self._response_queue.put_nowait(msg)
-            return
+    def put_in_response_queue(self, message):
+        self._response_queue.put_nowait(message)
 
     async def on_message_handler(self, msg: Call) -> Union[CallResult, CallError]:
         """
@@ -167,7 +135,8 @@ class ChargerHandler(
             handler = self.on_request_map[msg.action]
         except KeyError:
             raise NotSupportedError(
-                details={"cause": f"No 'on' handler for {msg.action} registered."}
+                description="NotImplemented",
+                details={"cause": f"No 'on' handler for {msg.action} registered."},
             )
 
         try:
@@ -193,6 +162,9 @@ class ChargerHandler(
         await self._send(response.to_json())
 
     async def _handle_call(self, msg: Call):
+        self.handle_csms_call(msg=msg)
+
+    async def handle_csms_call(self, msg: Call) -> Union[CallResult, CallError]:
         """
         Receives a Call and call the respective handler functions.
 
@@ -201,22 +173,23 @@ class ChargerHandler(
         3. send_call
         4. follow_request function
         """
-        handled_output = await self.on_message_handler(
-            msg
-        )  # on_request_map[msg.action]
-        response = self.prepare_response(msg, handled_output)
-        logger.debug("call: %s", response)
-        await self.send_call(response)
-
-    async def _follow_request_call(self, action: Action, payload):
         try:
-            handler = self.follow_request_map[action]
-            # Create task to avoid blocking when making a call inside the
-            # after handler
-            response = handler(**payload)
-            if inspect.isawaitable(response):
-                await response
+            handled_output = await self.on_message_handler(msg)
+        except (OCPPError, NotSupportedError) as error:
+            logger.exception("Error while handling request '%s'", msg)
+            response = msg.create_call_error(error).to_json()
+            await self._send(response)
+            return
+        response = self.prepare_response(msg, handled_output)
+        logger.debug("%s sending: %s", self.id, response)
+        await self.send_call(response)
+        return response
+
+    async def after_cs_response(
+        self, request: Call, response: Union[CallResult, CallError], **kwargs
+    ):
+        try:
+            handler = self.follow_request_map[request.action]
+            return handler(request, response, **kwargs)
         except KeyError:
-            # '_on_after' hooks are not required. Therefore ignore exception
-            # when no '_on_after' hook is installed.
-            logger.debug(f"There is nothing to do after {action}")
+            logger.debug(f"There is nothing to do after handling {request.action}")
